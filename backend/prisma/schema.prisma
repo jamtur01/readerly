@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  username      String   @unique
+  email         String   @unique
+  passwordHash  String
+  prefs         Json?
+  offlineLimit  Int      @default(500)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  folders       Folder[]
+  subscriptions Subscription[]
+  itemStates    ItemState[]
+  sharedItems   SharedItem[]
+  savedSearches SavedSearch[]
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@unique([userId, name])
+}
+
+model Feed {
+  id            String   @id @default(uuid())
+  url           String   @unique
+  title         String
+  lastFetched   DateTime?
+  fetchInterval Int      @default(30) // minutes
+  etag          String?
+  lastModified  String?
+  // Backoff / reliability
+  errorCount    Int      @default(0)
+  backoffUntil  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  items         Item[]
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id        String  @id @default(uuid())
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  feed      Feed    @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  feedId    String
+  folder    Folder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  folderId  String?
+  tags      String[]
+  sortOrder Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, feedId])
+  @@index([userId, folderId])
+}
+
+model Item {
+  id           String   @id @default(uuid())
+  feed         Feed     @relation(fields: [feedId], references: [id], onDelete: Cascade)
+  feedId       String
+  guid         String?
+  title        String
+  url          String?
+  contentHtml  String?
+  contentText  String?
+  imageUrl     String?
+  publishedAt  DateTime?
+  fetchedAt    DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  states       ItemState[]
+  sharedBy     SharedItem[]
+
+  @@unique([feedId, guid])
+  @@index([feedId, publishedAt])
+}
+
+model ItemState {
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  item      Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId    String
+
+  read      Boolean  @default(false)
+  starred   Boolean  @default(false)
+  shared    Boolean  @default(false)
+  archived  Boolean  @default(false)
+  readAt     DateTime?
+  starredAt  DateTime?
+  sharedAt   DateTime?
+  archivedAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@id([userId, itemId])
+  @@index([userId, read, starred, shared, archived])
+}
+
+model SharedItem {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId    String
+  note      String?
+  sharedAt  DateTime @default(now())
+
+  @@unique([userId, itemId])
+}
+
+model SavedSearch {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  name      String
+  query     String   // plain text query (q)
+  filters   Json?    // optional structured filters (e.g., { starred: true, feedId: ... })
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId])
+}

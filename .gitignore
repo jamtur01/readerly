@@ -1,0 +1,60 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+redisdata/*
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+.tmp/
+.temp/
+*.tsbuildinfo
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+*.log.*
+lerna-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Docker
+docker-compose.override.yml
+**/.dockerignore
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal
+
+# Data volumes
+data/
+pgdata/
+
+# Cache
+.cache/
+.nyc_output/
+.next/cache/
+turbo/
+
+# Misc
+*.local

@@ -1,0 +1,110 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: readerly-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-readerly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-readerly}
+      POSTGRES_DB: ${POSTGRES_DB:-readerly}
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-readerly} -d ${POSTGRES_DB:-readerly}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: readerly-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - ./redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: readerly-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://readerly:readerly@postgres:5432/readerly?schema=public
+      REDIS_URL: redis://redis:6379
+      BACKEND_PORT: 4000
+      CORS_ALLOW_ORIGIN: http://localhost:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "4001:4000"
+    command: sh -c "npx prisma migrate deploy && node dist/src/server.js"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_ORIGIN: http://localhost:4001
+    container_name: readerly-frontend
+    environment:
+      NEXT_PUBLIC_API_ORIGIN: http://localhost:4001
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  backend_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: readerly-backend-worker
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://readerly:readerly@postgres:5432/readerly?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["node", "dist/src/queue/fetcher.js"]
+
+  # One-off dev seed job (run on-demand)
+  # Usage:
+  #   docker compose run --rm --profile seed backend_seed
+  backend_seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: readerly-backend-seed
+    profiles: ["seed"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://readerly:readerly@postgres:5432/readerly?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    depends_on:
+      backend:
+        condition: service_started
+    command: ["node", "dist/src/scripts/seed.js"]
