@@ -77,7 +77,12 @@ export async function apiGet<T>(
   opts: { token?: string } = {}
 ): Promise<T> {
   const headers: Record<string, string> = {};
-  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  const tok =
+    opts.token ??
+    (typeof window !== "undefined"
+      ? (localStorage.getItem("token") || undefined)
+      : undefined);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
   const res = await fetch(`${API_ORIGIN}${path}`, {
     credentials: "include",
     headers,
@@ -94,7 +99,12 @@ export async function apiPost<T>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  const tok =
+    opts.token ??
+    (typeof window !== "undefined"
+      ? (localStorage.getItem("token") || undefined)
+      : undefined);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
   try {
     const res = await fetch(`${API_ORIGIN}${path}`, {
       method: "POST",
@@ -105,7 +115,7 @@ export async function apiPost<T>(
     return res.json() as Promise<T>;
   } catch {
     // Network error: queue for later and resolve optimistically
-    enqueue({ method: "POST", path, body, token: opts.token, ts: Date.now() });
+    enqueue({ method: "POST", path, body, token: tok, ts: Date.now() });
     return {} as T;
   }
 }
@@ -118,7 +128,12 @@ export async function apiPatch<T>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  const tok =
+    opts.token ??
+    (typeof window !== "undefined"
+      ? (localStorage.getItem("token") || undefined)
+      : undefined);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
   try {
     const res = await fetch(`${API_ORIGIN}${path}`, {
       method: "PATCH",
@@ -128,7 +143,7 @@ export async function apiPatch<T>(
     if (!res.ok) throw new Error(`PATCH ${path} failed: ${res.status}`);
     return res.json() as Promise<T>;
   } catch {
-    enqueue({ method: "PATCH", path, body, token: opts.token, ts: Date.now() });
+    enqueue({ method: "PATCH", path, body, token: tok, ts: Date.now() });
     return {} as T;
   }
 }
@@ -138,7 +153,12 @@ export async function apiDelete(
   opts: { token?: string } = {}
 ): Promise<void> {
   const headers: Record<string, string> = {};
-  if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
+  const tok =
+    opts.token ??
+    (typeof window !== "undefined"
+      ? (localStorage.getItem("token") || undefined)
+      : undefined);
+  if (tok) headers.Authorization = `Bearer ${tok}`;
   try {
     const res = await fetch(`${API_ORIGIN}${path}`, {
       method: "DELETE",
@@ -146,6 +166,6 @@ export async function apiDelete(
     });
     if (!res.ok) throw new Error(`DELETE ${path} failed: ${res.status}`);
   } catch {
-    enqueue({ method: "DELETE", path, ts: Date.now(), token: opts.token });
+    enqueue({ method: "DELETE", path, ts: Date.now(), token: tok });
   }
 }

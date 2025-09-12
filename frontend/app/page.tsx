@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   API_ORIGIN,
@@ -44,6 +44,20 @@ type Subscription = {
   unreadCount?: number;
 };
 
+// Helper: strip HTML to plain text for previews/details
+function stripHtml(html: string): string {
+  if (!html) return "";
+  try {
+    if (typeof window !== "undefined") {
+      const div = document.createElement("div");
+      div.innerHTML = html;
+      const text = (div.textContent || div.innerText || "").trim();
+      return text.replace(/\s+/g, " ");
+    }
+  } catch {}
+  // SSR or fallback
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
 export default function HomePage() {
   const [apiOk, setApiOk] = useState<boolean>(false);
   const { token, logout, hydrated } = useSession();
@@ -69,6 +83,8 @@ export default function HomePage() {
   const [showFull, setShowFull] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isDark, setIsDark] = useState(false);
+  const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
+  const listRef = useRef<HTMLUListElement | null>(null);
   useEffect(() => {
     try {
       setIsDark(document.documentElement.classList.contains("dark"));
@@ -79,6 +95,12 @@ export default function HomePage() {
   type SavedSearch = { id: string; name: string; query: string; filters?: any };
   const [saved, setSaved] = useState<SavedSearch[]>([]);
   const [newFeedUrl, setNewFeedUrl] = useState("");
+
+  // Categories (folders)
+  type Folder = { id: string; name: string };
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [newFolderName, setNewFolderName] = useState("");
+
 
   const page = 1;
   const pageSize = 30;
@@ -148,6 +170,67 @@ export default function HomePage() {
   useEffect(() => {
     loadSaved();
   }, [loadSaved]);
+
+  // Load folders (categories)
+  const loadFolders = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await apiGet<{ folders: Folder[] }>("/folders", { token });
+      setFolders(data.folders);
+    } catch {
+      // ignore
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadFolders();
+  }, [loadFolders]);
+
+  // Folder CRUD
+  const createFolder = useCallback(async () => {
+    if (!token) return;
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      await apiPost("/folders", { name }, { token });
+      setNewFolderName("");
+      await loadFolders();
+    } catch (e: any) {
+      setError(e?.message || "Failed to create category");
+    }
+  }, [token, newFolderName, loadFolders]);
+
+  const renameFolder = useCallback(
+    async (id: string) => {
+      if (!token) return;
+      const current = folders.find((f) => f.id === id)?.name || "";
+      const name = window.prompt("Rename category:", current);
+      if (!name || name === current) return;
+      try {
+        await apiPatch(`/folders/${id}`, { name }, { token });
+        await loadFolders();
+      } catch (e: any) {
+        setError(e?.message || "Failed to rename category");
+      }
+    },
+    [token, folders, loadFolders]
+  );
+
+  const deleteFolder = useCallback(
+    async (id: string) => {
+      if (!token) return;
+      if (!window.confirm("Delete this category? Feeds will be uncategorized."))
+        return;
+      try {
+        await apiDelete(`/folders/${id}`, { token });
+        await loadFolders();
+        await loadSubs();
+      } catch (e: any) {
+        setError(e?.message || "Failed to delete category");
+      }
+    },
+    [token, loadFolders, loadSubs]
+  );
 
   // Group subs by folder
   const grouped = useMemo(() => {
@@ -241,15 +324,18 @@ export default function HomePage() {
 
   const detail = useMemo(() => {
     if (!current) return { text: "", isLong: false, display: "" };
-    const text = current.contentText || "";
+    const baseText =
+      (current.contentText && current.contentText.trim().length > 0
+        ? current.contentText
+        : stripHtml(current.contentHtml || "")) || "";
     const limit = 800;
-    const isLong = text.length > limit;
+    const isLong = baseText.length > limit;
     const display = showFull
-      ? text
+      ? baseText
       : isLong
-      ? text.slice(0, limit) + "…"
-      : text;
-    return { text, isLong, display };
+      ? baseText.slice(0, limit) + "…"
+      : baseText;
+    return { text: baseText, isLong, display };
   }, [current, showFull]);
 
   // Actions
@@ -317,6 +403,29 @@ export default function HomePage() {
     }
   }, [current, token]);
 
+  const ensureRead = useCallback(async (id: string) => {
+    if (!token) return;
+    // Optimistic local update to avoid flicker
+    let alreadyRead = false;
+    setItems((prev) =>
+      prev.map((p) => {
+        if (p.id === id) {
+          alreadyRead = Boolean(p.state?.read);
+          return alreadyRead ? p : { ...p, state: { ...(p.state || {}), read: true } };
+        }
+        return p;
+      })
+    );
+    if (alreadyRead) return;
+    try {
+      await apiPost(`/items/${id}/state`, { read: true }, { token });
+      void updateItemState(id, { read: true });
+      void loadSubs();
+    } catch {
+      // ignore; reconciliation will happen on next sync
+    }
+  }, [token, loadSubs]);
+
   const markAllVisibleRead = useCallback(async () => {
     if (!token || items.length === 0) return;
     try {
@@ -334,6 +443,42 @@ export default function HomePage() {
       setError(e?.message || "Failed to mark all read");
     }
   }, [items, token, loadSubs]);
+
+  // Mark selected item as read on selection change (after ensureRead is defined)
+  useEffect(() => {
+    const it = selectedIdx >= 0 ? items[selectedIdx] : null;
+    if (!it || it.state?.read) return;
+    void ensureRead(it.id);
+  }, [selectedIdx, items, ensureRead]);
+
+  // Mark items as read when they scroll into view (approx 60% visible)
+  useEffect(() => {
+    if (!token) return;
+    const nodes = Array.from(
+      document.querySelectorAll('li[data-item="row"]')
+    ) as HTMLElement[];
+    if (nodes.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+            const el = entry.target as HTMLElement;
+            const id = el.getAttribute("data-id") || "";
+            if (!id) continue;
+            const item = items.find((i) => i.id === id);
+            if (item && !item.state?.read) {
+              void ensureRead(id);
+            }
+          }
+        }
+      },
+      { threshold: [0.6] }
+    );
+
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [items, token, ensureRead]);
 
   const fetchFeedNow = useCallback(
     async (feedId: string) => {
@@ -423,33 +568,33 @@ export default function HomePage() {
 
   return (
     <main id="content" className="h-screen flex">
-      <aside className="w-80 border-r p-4 space-y-4 overflow-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Readerly</h2>
-          <div className="flex items-center gap-2">
-            <SessionStatus />
-            <button
-              className="text-xs px-2 py-1 rounded border"
-              title="Toggle theme"
-              aria-pressed={isDark}
-              onClick={() => {
-                try {
-                  const el = document.documentElement;
-                  const next = el.classList.toggle("dark");
-                  localStorage.setItem("theme", next ? "dark" : "light");
-                  setIsDark(next);
-                } catch {}
-              }}
-            >
-              Theme
-            </button>
-            <span className="text-xs text-gray-500">
-              {apiOk ? "API ok" : "API down"}
-            </span>
-          </div>
+      <aside className="w-80 border-r p-4 space-y-5 overflow-auto bg-gray-50 dark:bg-gray-900">
+        <div className="mb-1">
+          <h2 className="text-2xl font-bold tracking-tight text-blue-700">Readerly</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <SessionStatus />
+          <button
+            className="text-xs px-2 py-1 rounded border"
+            title="Toggle theme"
+            aria-pressed={isDark}
+            onClick={() => {
+              try {
+                const el = document.documentElement;
+                const next = el.classList.toggle("dark");
+                localStorage.setItem("theme", next ? "dark" : "light");
+                setIsDark(next);
+              } catch {}
+            }}
+          >
+            Theme
+          </button>
+          <span className="text-xs text-gray-500">
+            {apiOk ? "API ok" : "API down"}
+          </span>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 rounded-lg border bg-white p-3 shadow-sm">
           <div className="text-xs uppercase text-gray-500">Views</div>
           <div className="flex gap-2">
             <button
@@ -495,7 +640,7 @@ export default function HomePage() {
         </div>
 
         {/* Search */}
-        <div className="space-y-2">
+        <div className="space-y-2 rounded-lg border bg-white p-3 shadow-sm">
           <div className="text-xs uppercase text-gray-500">Search</div>
           <div className="flex gap-2">
             <input
@@ -655,7 +800,7 @@ export default function HomePage() {
 
         {/* Add subscription */}
         {token && (
-          <div className="space-y-2">
+          <div className="space-y-2 rounded-lg border bg-white p-3 shadow-sm">
             <div className="text-xs uppercase text-gray-500">
               Add subscription
             </div>
@@ -683,6 +828,64 @@ export default function HomePage() {
                 Add
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Categories */}
+        {token && (
+          <div className="space-y-2 rounded-lg border bg-white p-3 shadow-sm">
+            <div className="text-xs uppercase text-gray-500">Categories</div>
+            <div className="flex gap-2">
+              <input
+                className="w-full border rounded px-2 py-1 text-sm"
+                type="text"
+                placeholder="New category name"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") createFolder();
+                }}
+              />
+              <button
+                className="text-xs px-2 py-1 rounded border"
+                onClick={createFolder}
+                disabled={!newFolderName.trim()}
+                title={
+                  !newFolderName.trim()
+                    ? "Enter a category name"
+                    : "Create category"
+                }
+              >
+                Add
+              </button>
+            </div>
+            {folders.length > 0 && (
+              <ul className="space-y-1">
+                {folders.map((f) => (
+                  <li key={f.id} className="flex items-center justify-between">
+                    <span className="text-sm truncate">{f.name}</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="text-xs px-1 py-0.5 rounded border"
+                        title="Rename"
+                        aria-label="Rename category"
+                        onClick={() => renameFolder(f.id)}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="text-xs px-1 py-0.5 rounded border"
+                        title="Delete"
+                        aria-label="Delete category"
+                        onClick={() => deleteFolder(f.id)}
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
 
@@ -740,6 +943,75 @@ export default function HomePage() {
                           >
                             ↻
                           </button>
+
+                          {/* Move to category */}
+                          <select
+                            className="opacity-0 group-hover:opacity-100 text-xs border rounded ml-2"
+                            value={s.folder?.id || ""}
+                            onChange={async (e) => {
+                              if (!token) return;
+                              const folderId = e.target.value || null;
+                              try {
+                                await apiPatch(
+                                  `/subscriptions/${s.id}`,
+                                  { folderId },
+                                  { token }
+                                );
+                                await loadSubs();
+                              } catch (err: any) {
+                                setError(err?.message || "Failed to move category");
+                              }
+                            }}
+                            title="Move to category"
+                            aria-label="Move to category"
+                          >
+                            <option value="">Uncategorized</option>
+                            {folders.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          {/* Unsubscribe */}
+                          <button
+                            className="opacity-0 group-hover:opacity-100 text-xs px-1 py-0.5 rounded border ml-2"
+                            title="Unsubscribe from this feed"
+                            aria-label="Unsubscribe"
+                            onClick={async () => {
+                              if (!token) return;
+                              if (!window.confirm("Unsubscribe from this feed?")) return;
+                              try {
+                                await apiDelete(`/subscriptions/${s.id}`, { token });
+                                if (selectedFeedId === s.feed.id) setSelectedFeedId(null);
+                                await loadSubs();
+                              } catch (err: any) {
+                                setError(err?.message || "Failed to unsubscribe");
+                              }
+                            }}
+                          >
+                            −
+                          </button>
+
+                          {/* Delete feed (danger) */}
+                          <button
+                            className="opacity-0 group-hover:opacity-100 text-xs px-1 py-0.5 rounded border ml-1"
+                            title="Delete feed (removes it entirely)"
+                            aria-label="Delete feed"
+                            onClick={async () => {
+                              if (!token) return;
+                              if (!window.confirm("Delete this feed entirely? This affects all subscribers.")) return;
+                              try {
+                                await apiDelete(`/feeds/${s.feed.id}`, { token });
+                                if (selectedFeedId === s.feed.id) setSelectedFeedId(null);
+                                await loadSubs();
+                              } catch (err: any) {
+                                setError(err?.message || "Failed to delete feed");
+                              }
+                            }}
+                          >
+                            🗑
+                          </button>
                         </li>
                       );
                     })}
@@ -757,7 +1029,7 @@ export default function HomePage() {
         ) : (
           <>
             <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <h3 className="font-semibold">Latest items</h3>
                 {selectedFeedId && (
                   <button
@@ -813,6 +1085,23 @@ export default function HomePage() {
                 >
                   Mark all visible read
                 </button>
+                {/* Density toggle */}
+                <div className="ml-2 inline-flex rounded border overflow-hidden">
+                  <button
+                    className={`text-xs px-2 py-1 ${density === "comfortable" ? "bg-blue-600 text-white" : "bg-white"}`}
+                    onClick={() => setDensity("comfortable")}
+                    title="Comfortable density"
+                  >
+                    Comfort
+                  </button>
+                  <button
+                    className={`text-xs px-2 py-1 border-l ${density === "compact" ? "bg-blue-600 text-white" : "bg-white"}`}
+                    onClick={() => setDensity("compact")}
+                    title="Compact density"
+                  >
+                    Compact
+                  </button>
+                </div>
                 <div className="text-xs text-gray-500">
                   Showing {items.length}
                 </div>
@@ -829,7 +1118,7 @@ export default function HomePage() {
               </div>
             )}
 
-            <ul className="space-y-2">
+            <ul ref={listRef} className="space-y-2">
               {items.map((it, idx) => {
                 const selected = idx === selectedIdx;
                 const read = Boolean(it.state?.read);
@@ -838,13 +1127,19 @@ export default function HomePage() {
                 return (
                   <li
                     key={it.id}
+                    data-item="row"
+                    data-id={it.id}
                     className={[
-                      "border rounded p-3 cursor-pointer dark:border-gray-700",
+                      "border rounded cursor-pointer dark:border-gray-700",
+                      density === "compact" ? "p-2 text-sm" : "p-3",
                       selected
                         ? "ring-2 ring-blue-400 bg-blue-50 dark:ring-blue-600 dark:bg-gray-800"
                         : "hover:bg-gray-50 dark:hover:bg-gray-800",
                     ].join(" ")}
-                    onClick={() => setSelectedIdx(idx)}
+                    onClick={() => {
+                      setSelectedIdx(idx);
+                      if (!read) { void ensureRead(it.id); }
+                    }}
                     onDoubleClick={() => {
                       if (it.url)
                         window.open(it.url, "_blank", "noopener,noreferrer");
@@ -862,6 +1157,13 @@ export default function HomePage() {
                       >
                         {it.title || "(no title)"}
                       </a>
+                      <span className="ml-2 text-xs text-gray-500">
+                        {(() => {
+                          try {
+                            return it.url ? new URL(it.url).hostname.replace(/^www\./, "") : "";
+                          } catch { return ""; }
+                        })()}
+                      </span>
                       <div className="flex items-center gap-2">
                         <button
                           className="text-xs px-2 py-1 rounded border"
@@ -940,6 +1242,19 @@ export default function HomePage() {
                           {shared ? "✓ Shared" : "Share"}
                         </button>
                         <button
+                          className="text-xs px-2 py-1 rounded border"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (it.url) {
+                              window.open(it.url, "_blank", "noopener,noreferrer");
+                            }
+                          }}
+                          disabled={!it.url}
+                          title={it.url ? "Open original in new tab" : "No link"}
+                        >
+                          Open ↗
+                        </button>
+                        <button
                           className={`text-xs px-2 py-1 rounded border ${
                             starred ? "bg-yellow-100" : ""
                           }`}
@@ -988,6 +1303,18 @@ export default function HomePage() {
                       {starred ? " • ★ Starred" : ""}
                       {shared ? " • Shared" : ""}
                     </div>
+                    {selected && (
+                      <div className="mt-2 text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+                        {(() => {
+                          const previewText =
+                            (it.contentText && it.contentText.trim().length > 0
+                              ? it.contentText
+                              : stripHtml(it.contentHtml || "")) || "";
+                          if (!previewText) return "No preview";
+                          return previewText.slice(0, 800) + (previewText.length > 800 ? "…" : "");
+                        })()}
+                      </div>
+                    )}
                   </li>
                 );
               })}
