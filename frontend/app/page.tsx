@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   API_ORIGIN,
   apiGet,
@@ -91,6 +92,13 @@ export default function HomePage() {
     "comfortable"
   );
   const listRef = useRef<HTMLUListElement | null>(null);
+  // Collapsible sidebar sections
+  const [showCategories, setShowCategories] = useState(true);
+  const [showSubs, setShowSubs] = useState(true);
+  // Per-folder collapse state
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Suppress auto-mark-read for items the user explicitly marked as unread
+  const noAutoRead = useRef<Set<string>>(new Set());
   useEffect(() => {
     try {
       setIsDark(document.documentElement.classList.contains("dark"));
@@ -361,6 +369,14 @@ export default function HomePage() {
             : it
         )
       );
+      // Manage auto-read suppression based on user's explicit choice
+      if (next === false) {
+        noAutoRead.current.add(current.id);
+        // expire suppression after 30s
+        setTimeout(() => noAutoRead.current.delete(current.id), 30000);
+      } else {
+        noAutoRead.current.delete(current.id);
+      }
       void loadSubs();
       void updateItemState(current.id, { read: next });
     } catch (e: any) {
@@ -411,6 +427,8 @@ export default function HomePage() {
   const ensureRead = useCallback(
     async (id: string) => {
       if (!token) return;
+      // If user explicitly marked this item as unread, do not auto-mark it
+      if (noAutoRead.current.has(id)) return;
       // Optimistic local update to avoid flicker
       let alreadyRead = false;
       setItems((prev) =>
@@ -427,6 +445,8 @@ export default function HomePage() {
       if (alreadyRead) return;
       try {
         await apiPost(`/items/${id}/state`, { read: true }, { token });
+        // since we've just explicitly marked as read, clear any suppression flag
+        noAutoRead.current.delete(id);
         void updateItemState(id, { read: true });
         void loadSubs();
       } catch {
@@ -457,7 +477,7 @@ export default function HomePage() {
   // Mark selected item as read on selection change (after ensureRead is defined)
   useEffect(() => {
     const it = selectedIdx >= 0 ? items[selectedIdx] : null;
-    if (!it || it.state?.read) return;
+    if (!it || it.state?.read || noAutoRead.current.has(it.id)) return;
     void ensureRead(it.id);
   }, [selectedIdx, items, ensureRead]);
 
@@ -477,7 +497,7 @@ export default function HomePage() {
             const id = el.getAttribute("data-id") || "";
             if (!id) continue;
             const item = items.find((i) => i.id === id);
-            if (item && !item.state?.read) {
+            if (item && !item.state?.read && !noAutoRead.current.has(id)) {
               void ensureRead(id);
             }
           }
@@ -789,26 +809,7 @@ export default function HomePage() {
         <Link className="text-blue-600 underline block" href="/sharing">
           My shared items
         </Link>
-        {token && (
-          <button
-            className="mt-2 text-xs px-2 py-1 rounded border"
-            onClick={() => {
-              logout();
-              setItems([]);
-              setSubs([]);
-              setSaved([]);
-              setSelectedIdx(-1);
-            }}
-            title="Clear session token"
-          >
-            Logout
-          </button>
-        )}
 
-        <div className="text-xs text-gray-500">
-          Shortcuts: j/k navigate • m toggle read • s star • h share • o/Enter
-          open
-        </div>
 
         {/* Add subscription */}
         {token && (
@@ -846,57 +847,71 @@ export default function HomePage() {
         {/* Categories */}
         {token && (
           <div className="space-y-2 rounded-lg border bg-white p-3 shadow-sm">
-            <div className="text-xs uppercase text-gray-500">Categories</div>
-            <div className="flex gap-2">
-              <input
-                className="w-full border rounded px-2 py-1 text-sm"
-                type="text"
-                placeholder="New category name"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") createFolder();
-                }}
-              />
+            <div className="flex items-center justify-between text-xs uppercase text-gray-500">
+              <span>Categories</span>
               <button
-                className="text-xs px-2 py-1 rounded border"
-                onClick={createFolder}
-                disabled={!newFolderName.trim()}
-                title={
-                  !newFolderName.trim()
-                    ? "Enter a category name"
-                    : "Create category"
-                }
+                className="text-xs"
+                aria-expanded={showCategories}
+                onClick={() => setShowCategories((v) => !v)}
+                title={showCategories ? "Collapse" : "Expand"}
               >
-                Add
+                {showCategories ? "▾" : "▸"}
               </button>
             </div>
-            {folders.length > 0 && (
-              <ul className="space-y-1">
-                {folders.map((f) => (
-                  <li key={f.id} className="flex items-center justify-between">
-                    <span className="text-sm truncate">{f.name}</span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        className="text-xs px-1 py-0.5 rounded border"
-                        title="Rename"
-                        aria-label="Rename category"
-                        onClick={() => renameFolder(f.id)}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="text-xs px-1 py-0.5 rounded border"
-                        title="Delete"
-                        aria-label="Delete category"
-                        onClick={() => deleteFolder(f.id)}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+            {showCategories && (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    className="w-full border rounded px-2 py-1 text-sm"
+                    type="text"
+                    placeholder="New category name"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") createFolder();
+                    }}
+                  />
+                  <button
+                    className="text-xs px-2 py-1 rounded border"
+                    onClick={createFolder}
+                    disabled={!newFolderName.trim()}
+                    title={
+                      !newFolderName.trim()
+                        ? "Enter a category name"
+                        : "Create category"
+                    }
+                  >
+                    Add
+                  </button>
+                </div>
+                {folders.length > 0 && (
+                  <ul className="space-y-1">
+                    {folders.map((f) => (
+                      <li key={f.id} className="flex items-center justify-between">
+                        <span className="text-sm truncate">{f.name}</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            className="text-xs px-1 py-0.5 rounded border"
+                            title="Rename"
+                            aria-label="Rename category"
+                            onClick={() => renameFolder(f.id)}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="text-xs px-1 py-0.5 rounded border"
+                            title="Delete"
+                            aria-label="Delete category"
+                            onClick={() => deleteFolder(f.id)}
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         )}
@@ -916,9 +931,23 @@ export default function HomePage() {
             <div className="space-y-3">
               {grouped.map(([folder, arr]) => (
                 <div key={folder}>
-                  <div className="text-xs font-semibold text-gray-600 mb-1">
-                    {folder}
+                  <div className="flex items-center justify-between text-xs font-semibold text-gray-600 mb-1">
+                    <span>{folder}</span>
+                    <button
+                      className="text-xs"
+                      aria-expanded={!collapsed[folder]}
+                      onClick={() =>
+                        setCollapsed((prev) => ({
+                          ...prev,
+                          [folder]: !prev[folder],
+                        }))
+                      }
+                      title={!collapsed[folder] ? "Collapse" : "Expand"}
+                    >
+                      {!collapsed[folder] ? "▾" : "▸"}
+                    </button>
                   </div>
+                  {!collapsed[folder] && (
                   <ul className="space-y-1">
                     {arr.map((s) => {
                       const active = selectedFeedId === s.feed.id;
@@ -1048,10 +1077,14 @@ export default function HomePage() {
                       );
                     })}
                   </ul>
+                  )}
                 </div>
               ))}
             </div>
           )}
+        </div>
+        <div className="text-xs text-gray-500 pt-4 border-t mt-4">
+          Shortcuts: j/k navigate • m toggle read • s star • h share • o/Enter open
         </div>
       </aside>
 
@@ -1172,13 +1205,17 @@ export default function HomePage() {
                     className={[
                       "border rounded cursor-pointer dark:border-gray-700",
                       density === "compact" ? "p-2 text-sm" : "p-3",
+                      // unread items get a left accent
+                      !read ? "border-l-4 border-blue-500" : "border-l-4 border-transparent",
                       selected
                         ? "ring-2 ring-blue-400 bg-blue-50 dark:ring-blue-600 dark:bg-gray-800"
-                        : "hover:bg-gray-50 dark:hover:bg-gray-800",
+                        : (!read
+                            ? "bg-amber-50 hover:bg-amber-100 dark:hover:bg-gray-800"
+                            : "hover:bg-gray-50 dark:hover:bg-gray-800"),
                     ].join(" ")}
                     onClick={() => {
                       setSelectedIdx(idx);
-                      if (!read) {
+                      if (!read && !noAutoRead.current.has(it.id)) {
                         void ensureRead(it.id);
                       }
                     }}
@@ -1188,9 +1225,13 @@ export default function HomePage() {
                     }}
                   >
                     <div className="flex items-center justify-between">
+                      <span
+                        className={`inline-block ${read ? "w-2 h-2 bg-gray-300" : "w-2.5 h-2.5 bg-blue-600 ring-2 ring-blue-200"} rounded-full mr-2`}
+                        aria-hidden="true"
+                      ></span>
                       <a
                         className={`font-medium ${
-                          read ? "text-gray-700" : "text-blue-700"
+                          read ? "text-gray-700" : "text-blue-700 font-semibold"
                         }`}
                         href={it.url || "#"}
                         target="_blank"
@@ -1238,6 +1279,13 @@ export default function HomePage() {
                                       : p
                                   )
                                 );
+                                // Respect user's explicit unread choice
+                                if (next === false) {
+                                  noAutoRead.current.add(it.id);
+                                  setTimeout(() => noAutoRead.current.delete(it.id), 30000);
+                                } else {
+                                  noAutoRead.current.delete(it.id);
+                                }
                               } catch (err: any) {
                                 setError(
                                   err?.message || "Failed to toggle read"
@@ -1422,12 +1470,20 @@ export default function HomePage() {
                   </div>
                 </div>
                 {current.imageUrl && (
-                  <img
-                    src={current.imageUrl || ""}
-                    alt=""
-                    className="max-h-64 rounded mb-2 object-cover"
-                    referrerPolicy="no-referrer"
-                  />
+                  <div
+                    className="relative w-full rounded mb-2 overflow-hidden"
+                    style={{ height: "16rem" }}
+                  >
+                    <Image
+                      src={current.imageUrl}
+                      alt=""
+                      fill
+                      sizes="(max-width: 768px) 100vw, 800px"
+                      className="object-cover"
+                      referrerPolicy="no-referrer"
+                      unoptimized
+                    />
+                  </div>
                 )}
                 <div className="text-sm whitespace-pre-wrap">
                   {detail.display || "No content"}
