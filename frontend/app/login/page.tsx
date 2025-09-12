@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useSession } from "../../lib/session";
 
 export default function LoginPage() {
@@ -140,9 +141,9 @@ export default function LoginPage() {
         </form>
 
         <div className="mt-4 text-center">
-          <a className="text-sm text-blue-700 hover:underline" href="/">
+          <Link className="text-sm text-blue-700 hover:underline" href="/">
             ← Back to app
-          </a>
+          </Link>
         </div>
       </div>
     </main>

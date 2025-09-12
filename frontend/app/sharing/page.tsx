@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useSession } from "../../lib/session";
 import { API_ORIGIN, apiGet, apiPost } from "../../lib/api";
 
@@ -106,9 +107,9 @@ export default function SharingPage() {
     <main className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">My shared items</h1>
-        <a className="text-blue-600 underline text-sm" href="/">
+        <Link className="text-blue-600 underline text-sm" href="/">
           ← Back
-        </a>
+        </Link>
       </div>
 
       {rssUrl && (

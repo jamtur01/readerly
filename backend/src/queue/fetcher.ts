@@ -1,5 +1,4 @@
 import { createHash } from "crypto";
-import { RequestInit } from "undici";
 import { XMLParser } from "fast-xml-parser";
 import { prisma } from "../prisma";
 import { env } from "../env";

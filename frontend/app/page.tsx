@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   API_ORIGIN,
   apiGet,
@@ -56,7 +57,10 @@ function stripHtml(html: string): string {
     }
   } catch {}
   // SSR or fallback
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 export default function HomePage() {
   const [apiOk, setApiOk] = useState<boolean>(false);
@@ -83,7 +87,9 @@ export default function HomePage() {
   const [showFull, setShowFull] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isDark, setIsDark] = useState(false);
-  const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    "comfortable"
+  );
   const listRef = useRef<HTMLUListElement | null>(null);
   useEffect(() => {
     try {
@@ -100,7 +106,6 @@ export default function HomePage() {
   type Folder = { id: string; name: string };
   const [folders, setFolders] = useState<Folder[]>([]);
   const [newFolderName, setNewFolderName] = useState("");
-
 
   const page = 1;
   const pageSize = 30;
@@ -403,28 +408,33 @@ export default function HomePage() {
     }
   }, [current, token]);
 
-  const ensureRead = useCallback(async (id: string) => {
-    if (!token) return;
-    // Optimistic local update to avoid flicker
-    let alreadyRead = false;
-    setItems((prev) =>
-      prev.map((p) => {
-        if (p.id === id) {
-          alreadyRead = Boolean(p.state?.read);
-          return alreadyRead ? p : { ...p, state: { ...(p.state || {}), read: true } };
-        }
-        return p;
-      })
-    );
-    if (alreadyRead) return;
-    try {
-      await apiPost(`/items/${id}/state`, { read: true }, { token });
-      void updateItemState(id, { read: true });
-      void loadSubs();
-    } catch {
-      // ignore; reconciliation will happen on next sync
-    }
-  }, [token, loadSubs]);
+  const ensureRead = useCallback(
+    async (id: string) => {
+      if (!token) return;
+      // Optimistic local update to avoid flicker
+      let alreadyRead = false;
+      setItems((prev) =>
+        prev.map((p) => {
+          if (p.id === id) {
+            alreadyRead = Boolean(p.state?.read);
+            return alreadyRead
+              ? p
+              : { ...p, state: { ...(p.state || {}), read: true } };
+          }
+          return p;
+        })
+      );
+      if (alreadyRead) return;
+      try {
+        await apiPost(`/items/${id}/state`, { read: true }, { token });
+        void updateItemState(id, { read: true });
+        void loadSubs();
+      } catch {
+        // ignore; reconciliation will happen on next sync
+      }
+    },
+    [token, loadSubs]
+  );
 
   const markAllVisibleRead = useCallback(async () => {
     if (!token || items.length === 0) return;
@@ -570,7 +580,9 @@ export default function HomePage() {
     <main id="content" className="h-screen flex">
       <aside className="w-80 border-r p-4 space-y-5 overflow-auto bg-gray-50 dark:bg-gray-900">
         <div className="mb-1">
-          <h2 className="text-2xl font-bold tracking-tight text-blue-700">Readerly</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-blue-700">
+            Readerly
+          </h2>
         </div>
         <div className="flex items-center gap-2">
           <SessionStatus />
@@ -770,13 +782,13 @@ export default function HomePage() {
         </div>
 
         {!token && (
-          <a className="text-blue-600 underline block" href="/login">
+          <Link className="text-blue-600 underline block" href="/login">
             Login / Signup
-          </a>
+          </Link>
         )}
-        <a className="text-blue-600 underline block" href="/sharing">
+        <Link className="text-blue-600 underline block" href="/sharing">
           My shared items
-        </a>
+        </Link>
         {token && (
           <button
             className="mt-2 text-xs px-2 py-1 rounded border"
@@ -959,7 +971,9 @@ export default function HomePage() {
                                 );
                                 await loadSubs();
                               } catch (err: any) {
-                                setError(err?.message || "Failed to move category");
+                                setError(
+                                  err?.message || "Failed to move category"
+                                );
                               }
                             }}
                             title="Move to category"
@@ -980,13 +994,21 @@ export default function HomePage() {
                             aria-label="Unsubscribe"
                             onClick={async () => {
                               if (!token) return;
-                              if (!window.confirm("Unsubscribe from this feed?")) return;
+                              if (
+                                !window.confirm("Unsubscribe from this feed?")
+                              )
+                                return;
                               try {
-                                await apiDelete(`/subscriptions/${s.id}`, { token });
-                                if (selectedFeedId === s.feed.id) setSelectedFeedId(null);
+                                await apiDelete(`/subscriptions/${s.id}`, {
+                                  token,
+                                });
+                                if (selectedFeedId === s.feed.id)
+                                  setSelectedFeedId(null);
                                 await loadSubs();
                               } catch (err: any) {
-                                setError(err?.message || "Failed to unsubscribe");
+                                setError(
+                                  err?.message || "Failed to unsubscribe"
+                                );
                               }
                             }}
                           >
@@ -1000,13 +1022,23 @@ export default function HomePage() {
                             aria-label="Delete feed"
                             onClick={async () => {
                               if (!token) return;
-                              if (!window.confirm("Delete this feed entirely? This affects all subscribers.")) return;
+                              if (
+                                !window.confirm(
+                                  "Delete this feed entirely? This affects all subscribers."
+                                )
+                              )
+                                return;
                               try {
-                                await apiDelete(`/feeds/${s.feed.id}`, { token });
-                                if (selectedFeedId === s.feed.id) setSelectedFeedId(null);
+                                await apiDelete(`/feeds/${s.feed.id}`, {
+                                  token,
+                                });
+                                if (selectedFeedId === s.feed.id)
+                                  setSelectedFeedId(null);
                                 await loadSubs();
                               } catch (err: any) {
-                                setError(err?.message || "Failed to delete feed");
+                                setError(
+                                  err?.message || "Failed to delete feed"
+                                );
                               }
                             }}
                           >
@@ -1088,14 +1120,22 @@ export default function HomePage() {
                 {/* Density toggle */}
                 <div className="ml-2 inline-flex rounded border overflow-hidden">
                   <button
-                    className={`text-xs px-2 py-1 ${density === "comfortable" ? "bg-blue-600 text-white" : "bg-white"}`}
+                    className={`text-xs px-2 py-1 ${
+                      density === "comfortable"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white"
+                    }`}
                     onClick={() => setDensity("comfortable")}
                     title="Comfortable density"
                   >
                     Comfort
                   </button>
                   <button
-                    className={`text-xs px-2 py-1 border-l ${density === "compact" ? "bg-blue-600 text-white" : "bg-white"}`}
+                    className={`text-xs px-2 py-1 border-l ${
+                      density === "compact"
+                        ? "bg-blue-600 text-white"
+                        : "bg-white"
+                    }`}
                     onClick={() => setDensity("compact")}
                     title="Compact density"
                   >
@@ -1138,7 +1178,9 @@ export default function HomePage() {
                     ].join(" ")}
                     onClick={() => {
                       setSelectedIdx(idx);
-                      if (!read) { void ensureRead(it.id); }
+                      if (!read) {
+                        void ensureRead(it.id);
+                      }
                     }}
                     onDoubleClick={() => {
                       if (it.url)
@@ -1160,8 +1202,12 @@ export default function HomePage() {
                       <span className="ml-2 text-xs text-gray-500">
                         {(() => {
                           try {
-                            return it.url ? new URL(it.url).hostname.replace(/^www\./, "") : "";
-                          } catch { return ""; }
+                            return it.url
+                              ? new URL(it.url).hostname.replace(/^www\./, "")
+                              : "";
+                          } catch {
+                            return "";
+                          }
                         })()}
                       </span>
                       <div className="flex items-center gap-2">
@@ -1246,11 +1292,17 @@ export default function HomePage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (it.url) {
-                              window.open(it.url, "_blank", "noopener,noreferrer");
+                              window.open(
+                                it.url,
+                                "_blank",
+                                "noopener,noreferrer"
+                              );
                             }
                           }}
                           disabled={!it.url}
-                          title={it.url ? "Open original in new tab" : "No link"}
+                          title={
+                            it.url ? "Open original in new tab" : "No link"
+                          }
                         >
                           Open ↗
                         </button>
@@ -1311,7 +1363,10 @@ export default function HomePage() {
                               ? it.contentText
                               : stripHtml(it.contentHtml || "")) || "";
                           if (!previewText) return "No preview";
-                          return previewText.slice(0, 800) + (previewText.length > 800 ? "…" : "");
+                          return (
+                            previewText.slice(0, 800) +
+                            (previewText.length > 800 ? "…" : "")
+                          );
                         })()}
                       </div>
                     )}
