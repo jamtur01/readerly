@@ -1,6 +1,29 @@
 export const API_ORIGIN =
   process.env.NEXT_PUBLIC_API_ORIGIN || "http://localhost:4000";
 
+// Auth handling
+class AuthError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+function forceLogout(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem("token");
+    // Hard redirect to ensure all state is cleared
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    } else {
+      window.location.reload();
+    }
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Offline queue for write operations. Minimal implementation:
  * - Enqueue POST/PATCH/DELETE when network fails.
@@ -56,9 +79,15 @@ export async function flushOfflineQueue(): Promise<void> {
         headers,
         body: job.body ? JSON.stringify(job.body) : undefined,
       });
+      if (res.status === 401) {
+        // Token invalid; force logout and drop job
+        forceLogout();
+        continue;
+      }
       if (!res.ok)
         throw new Error(`${job.method} ${job.path} => ${res.status}`);
     } catch {
+      // Network error or transient failure: keep for later
       remaining.push(job);
     }
   }
@@ -87,6 +116,10 @@ export async function apiGet<T>(
     credentials: "include",
     headers,
   });
+  if (res.status === 401) {
+    forceLogout();
+    throw new AuthError(`GET ${path} failed: 401`);
+  }
   if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -111,9 +144,15 @@ export async function apiPost<T>(
       headers,
       body: JSON.stringify(body),
     });
+    if (res.status === 401) {
+      forceLogout();
+      throw new AuthError(`POST ${path} failed: 401`);
+    }
     if (!res.ok) throw new Error(`POST ${path} failed: ${res.status}`);
     return res.json() as Promise<T>;
-  } catch {
+  } catch (err) {
+    // Do not enqueue auth failures
+    if (err instanceof AuthError) throw err;
     // Network error: queue for later and resolve optimistically
     enqueue({ method: "POST", path, body, token: tok, ts: Date.now() });
     return {} as T;
@@ -140,9 +179,14 @@ export async function apiPatch<T>(
       headers,
       body: JSON.stringify(body),
     });
+    if (res.status === 401) {
+      forceLogout();
+      throw new AuthError(`PATCH ${path} failed: 401`);
+    }
     if (!res.ok) throw new Error(`PATCH ${path} failed: ${res.status}`);
     return res.json() as Promise<T>;
-  } catch {
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
     enqueue({ method: "PATCH", path, body, token: tok, ts: Date.now() });
     return {} as T;
   }
@@ -164,8 +208,13 @@ export async function apiDelete(
       method: "DELETE",
       headers,
     });
+    if (res.status === 401) {
+      forceLogout();
+      throw new AuthError(`DELETE ${path} failed: 401`);
+    }
     if (!res.ok) throw new Error(`DELETE ${path} failed: ${res.status}`);
-  } catch {
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
     enqueue({ method: "DELETE", path, ts: Date.now(), token: tok });
   }
 }
