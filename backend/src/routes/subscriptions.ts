@@ -5,9 +5,11 @@ import { requireAuth } from "../middleware/auth";
 
 export const router = Router();
 
+const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 const createSubSchema = z.object({
   feedId: z.string().uuid(),
-  folderId: z.string().uuid().nullable().optional(),
+  folderId: z.string().nullable().optional(),
   tags: z.array(z.string().min(1)).max(20).optional().default([]),
   sortOrder: z.number().int().optional(),
 });
@@ -29,6 +31,9 @@ router.post("/", requireAuth, async (req, res) => {
 
     // Optional: ensure folder belongs to user if provided
     if (folderId) {
+      if (typeof folderId === "string" && !UUID_SHAPE.test(folderId)) {
+        return res.status(400).json({ error: "Invalid folderId" });
+      }
       const folder = await prisma.folder.findFirst({
         where: { id: folderId, userId },
       });
@@ -118,7 +123,7 @@ router.get("/", requireAuth, async (req, res) => {
 });
 
 const updateSubSchema = z.object({
-  folderId: z.string().uuid().nullable().optional(),
+  folderId: z.string().nullable().optional(),
   tags: z.array(z.string().min(1)).max(20).optional(),
   sortOrder: z.number().int().optional(),
 });
@@ -136,6 +141,9 @@ router.patch("/:id", requireAuth, async (req, res) => {
 
   try {
     if (folderId) {
+      if (typeof folderId === "string" && !UUID_SHAPE.test(folderId)) {
+        return res.status(400).json({ error: "Invalid folderId" });
+      }
       const folder = await prisma.folder.findFirst({
         where: { id: folderId, userId },
       });
